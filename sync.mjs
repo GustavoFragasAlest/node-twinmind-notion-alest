@@ -2,18 +2,19 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { FileOAuthProvider } from "./oauth-provider.mjs"
 import { Client as NotionClient } from "@notionhq/client"
+import { execSync } from "node:child_process"
 import fs from "node:fs"
 
 const SERVER_URL = "https://api.twinmind.com/mcp"
 const TOKEN_URL = "https://api.twinmind.com/oauth/token"
+const REPO = "GustavoFragasAlest/node-twinmind-notion-alest"
 const notion = new NotionClient({ auth: process.env.NOTION_TOKEN })
 const DATABASE_ID = process.env.NOTION_DATABASE_ID
 
-// No GitHub Actions, recria os arquivos a partir dos secrets
 if (process.env.TWINMIND_TOKENS) fs.writeFileSync("./tokens.json", process.env.TWINMIND_TOKENS)
 if (process.env.TWINMIND_CLIENT) fs.writeFileSync("./client.json", process.env.TWINMIND_CLIENT)
 
-// --- renova o token de acesso ANTES de conectar (o de acesso dura ~1h e expira entre as execucoes) ---
+// --- renova o token de acesso ANTES de conectar (ele dura ~1h e expira entre execucoes) ---
 async function ensureFreshToken() {
   if (!fs.existsSync("./tokens.json")) { console.log("DEBUG: sem tokens.json"); return }
   const tokens = JSON.parse(fs.readFileSync("./tokens.json", "utf8"))
@@ -29,41 +30,67 @@ async function ensureFreshToken() {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   })
-  if (!resp.ok) {
-    console.log("DEBUG refresh FAIL:", resp.status, await resp.text())
-    return
-  }
+  if (!resp.ok) { console.log("DEBUG refresh FAIL:", resp.status, await resp.text()); return }
   const fresh = await resp.json()
-  // se o servidor nao devolver um novo refresh_token, mantem o atual
   if (!fresh.refresh_token && tokens.refresh_token) fresh.refresh_token = tokens.refresh_token
   fs.writeFileSync("./tokens.json", JSON.stringify(fresh, null, 2))
   console.log("DEBUG token renovado OK")
 }
+
+// --- salva o token rotacionado de volta no secret (senao quebra amanha) ---
+function persistTokensToSecret() {
+  if (!process.env.GH_PAT) { console.log("DEBUG: sem GH_PAT (ok se for local)"); return }
+  try {
+    execSync(`gh secret set TWINMIND_TOKENS --repo ${REPO} < tokens.json`, {
+      stdio: "inherit",
+      env: { ...process.env, GH_TOKEN: process.env.GH_PAT },
+    })
+    console.log("DEBUG secret TWINMIND_TOKENS atualizado para o proximo dia")
+  } catch (e) {
+    console.log("DEBUG falha ao atualizar secret:", e.message)
+  }
+}
+
 await ensureFreshToken()
+persistTokensToSecret()
 
 const provider = new FileOAuthProvider({ redirectUrl: "http://localhost:8765/callback" })
 const transport = new StreamableHTTPClientTransport(new URL(SERVER_URL), { authProvider: provider })
 const twin = new Client({ name: "twinmind-notion-sync", version: "1.0.0" }, { capabilities: {} })
 await twin.connect(transport)
 
-// --- helpers ---
-function parseToolJson(result) {
-  const text = (result.content || []).filter((c) => c.type === "text").map((c) => c.text).join("")
-  const safe = text.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")
-  try {
-    return JSON.parse(safe)
-  } catch (e) {
-    const pos = Number((/position (\d+)/.exec(e.message) || [])[1]) || 0
-    console.log("DEBUG parse FAIL:", e.message, "| around:", JSON.stringify(text.slice(Math.max(0, pos - 120), pos + 120)))
-    return text
+// --- le o texto da ferramenta ---
+function toolText(result) {
+  return (result.content || []).filter((c) => c.type === "text").map((c) => c.text).join("")
+}
+// --- extrai os objetos COMPLETOS de um array JSON que pode estar cortado no meio ---
+function salvageItems(text) {
+  const items = []
+  let depth = 0, inStr = false, esc = false, start = -1
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === "\\") esc = true
+      else if (ch === '"') inStr = false
+      continue
+    }
+    if (ch === '"') { inStr = true; continue }
+    if (ch === "{") { if (depth === 0) start = i; depth++ }
+    else if (ch === "}") {
+      depth--
+      if (depth === 0 && start >= 0) {
+        try { items.push(JSON.parse(text.slice(start, i + 1))) } catch (e) {}
+        start = -1
+      }
+    }
   }
+  return items
 }
-function asList(parsed) {
-  if (Array.isArray(parsed)) return parsed
-  if (parsed && Array.isArray(parsed.results)) return parsed.results
-  if (parsed && Array.isArray(parsed.items)) return parsed.items
-  return []
+function parseOne(text) {
+  try { return JSON.parse(text) } catch (e) { return null }
 }
+
 const toText = (v) => Array.isArray(v) ? v.join("\n") : (v || "")
 const rt = (s) => (s ? [{ type: "text", text: { content: String(s).slice(0, 2000) } }] : [])
 const para = (t) => ({ object: "block", type: "paragraph", paragraph: { rich_text: rt(t) } })
@@ -94,7 +121,7 @@ async function existingIds() {
 }
 async function createRow(it, full) {
   const summary = it.summary || full?.summary || ""
-  const transcript = full?.transcript || full?.content || ""
+  const transcript = full?.content || full?.transcript || ""
   const children = []
   if (summary) { children.push(h2("Resumo"), para(summary)) }
   if (transcript) {
@@ -117,19 +144,19 @@ async function createRow(it, full) {
   await notion.pages.create({ parent: { database_id: DATABASE_ID }, properties: props, children })
 }
 
-// --- fluxo principal (paginado por data, lotes pequenos para nao estourar o limite de ~100KB) ---
+// --- fluxo principal: pagina por DATA (o limit e ignorado pela API) ---
 const seen = await existingIds()
 let cursor = null
 let novos = 0
 const processed = new Set()
-for (let page = 0; page < 200; page++) {
-  const args = { limit: 10 }
+for (let page = 0; page < 500; page++) {
+  const args = {}
   if (cursor) args.end_time = cursor
-  const batch = asList(parseToolJson(await twin.callTool({ name: "summary_search", arguments: args })))
-  console.log("DEBUG pagina", page, "| itens:", batch.length, "| ate:", cursor)
+  const batch = salvageItems(toolText(await twin.callTool({ name: "summary_search", arguments: args })))
+  console.log("DEBUG pagina", page, "| itens lidos:", batch.length, "| ate:", cursor)
   if (!batch.length) break
-  let novosNaPagina = 0
   let oldest = null
+  let novosNaPagina = 0
   for (const it of batch) {
     const id = it.meeting_id
     if (it.start_time_local && (oldest === null || it.start_time_local < oldest)) oldest = it.start_time_local
@@ -137,7 +164,7 @@ for (let page = 0; page < 200; page++) {
     processed.add(id)
     novosNaPagina++
     if (seen.has(id)) continue
-    const full = parseToolJson(await twin.callTool({ name: "fetch", arguments: { id: `summary-${id}` } }))
+    const full = parseOne(toolText(await twin.callTool({ name: "fetch", arguments: { id: `summary-${id}` } })))
     await createRow(it, full)
     novos++
   }
