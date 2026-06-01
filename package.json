@@ -1,0 +1,14 @@
+{
+  "name": "twinmind-notion-sync",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "auth": "node auth.mjs",
+    "sync": "node sync.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.7.0",
+    "@notionhq/client": "^2.2.15",
+    "open": "^10.1.0"
+  }
+}
