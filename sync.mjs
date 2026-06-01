@@ -5,12 +5,41 @@ import { Client as NotionClient } from "@notionhq/client"
 import fs from "node:fs"
 
 const SERVER_URL = "https://api.twinmind.com/mcp"
+const TOKEN_URL = "https://api.twinmind.com/oauth/token"
 const notion = new NotionClient({ auth: process.env.NOTION_TOKEN })
 const DATABASE_ID = process.env.NOTION_DATABASE_ID
 
 // No GitHub Actions, recria os arquivos a partir dos secrets
 if (process.env.TWINMIND_TOKENS) fs.writeFileSync("./tokens.json", process.env.TWINMIND_TOKENS)
 if (process.env.TWINMIND_CLIENT) fs.writeFileSync("./client.json", process.env.TWINMIND_CLIENT)
+
+// --- renova o token de acesso ANTES de conectar (o de acesso dura ~1h e expira entre as execucoes) ---
+async function ensureFreshToken() {
+  if (!fs.existsSync("./tokens.json")) { console.log("DEBUG: sem tokens.json"); return }
+  const tokens = JSON.parse(fs.readFileSync("./tokens.json", "utf8"))
+  const client = fs.existsSync("./client.json") ? JSON.parse(fs.readFileSync("./client.json", "utf8")) : {}
+  if (!tokens.refresh_token) { console.log("DEBUG: sem refresh_token, pulando refresh"); return }
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: tokens.refresh_token,
+    client_id: client.client_id || "",
+  })
+  const resp = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  })
+  if (!resp.ok) {
+    console.log("DEBUG refresh FAIL:", resp.status, await resp.text())
+    return
+  }
+  const fresh = await resp.json()
+  // se o servidor nao devolver um novo refresh_token, mantem o atual
+  if (!fresh.refresh_token && tokens.refresh_token) fresh.refresh_token = tokens.refresh_token
+  fs.writeFileSync("./tokens.json", JSON.stringify(fresh, null, 2))
+  console.log("DEBUG token renovado OK")
+}
+await ensureFreshToken()
 
 const provider = new FileOAuthProvider({ redirectUrl: "http://localhost:8765/callback" })
 const transport = new StreamableHTTPClientTransport(new URL(SERVER_URL), { authProvider: provider })
