@@ -85,6 +85,7 @@ async function createRow(it, full) {
 // --- fluxo principal ---
 const seen = await existingIds()
 const list = asList(parseToolJson(await twin.callTool({ name: "summary_search", arguments: { query: "" } })))
+console.log("DEBUG itens retornados pela TwinMind:", list.length)
 let novos = 0
 for (const it of list) {
   const id = it.meeting_id
