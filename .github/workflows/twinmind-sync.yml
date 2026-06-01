@@ -14,8 +14,8 @@ jobs:
       - run: npm install
       - run: npm run sync
         env:
-            NOTION_TOKEN: $❰❰ secrets.NOTION_TOKEN ❱❱
-            NOTION_DATABASE_ID: $❰❰ secrets.NOTION_DATABASE_ID ❱❱
-            TWINMIND_TOKENS: $❰❰ secrets.TWINMIND_TOKENS ❱❱
-            TWINMIND_CLIENT: $❰❰ secrets.TWINMIND_CLIENT ❱❱
+            NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+            NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+            TWINMIND_TOKENS: ${{ secrets.TWINMIND_TOKENS }}
+            TWINMIND_CLIENT: ${{ secrets.TWINMIND_CLIENT }}
                  
