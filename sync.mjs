@@ -19,7 +19,7 @@ await twin.connect(transport)
 
 // --- helpers ---
 function parseToolJson(result) {
-  const text = (result.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n")
+  const text = (result.content || []).filter((c) => c.type === "text").map((c) => c.text).join("")
   try { return JSON.parse(text) } catch { return text }
 }
 // ATENCAO: confirme a forma real do retorno logando uma vez. Normaliza array/{results}/{items}.
@@ -85,8 +85,9 @@ async function createRow(it, full) {
 // --- fluxo principal ---
 const seen = await existingIds()
 const _raw = await twin.callTool({ name: "summary_search", arguments: { limit: 100 } })
-console.log("DEBUG RAW:", JSON.stringify(_raw).slice(0, 1500))
+console.log("DEBUG content items:", (_raw.content || []).length)
 const list = asList(parseToolJson(_raw))
+console.log("DEBUG itens lidos:", list.length)
 let novos = 0
 for (const it of list) {
   const id = it.meeting_id
