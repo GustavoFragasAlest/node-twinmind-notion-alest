@@ -29,7 +29,6 @@ function parseToolJson(result) {
     return text
   }
 }
-// ATENCAO: confirme a forma real do retorno logando uma vez. Normaliza array/{results}/{items}.
 function asList(parsed) {
   if (Array.isArray(parsed)) return parsed
   if (parsed && Array.isArray(parsed.results)) return parsed.results
@@ -85,23 +84,36 @@ async function createRow(it, full) {
   if (it.start_time_local) props["Data"] = { date: { start: it.start_time_local } }
   if (it.end_time_local) props["Fim"] = { date: { start: it.end_time_local } }
   const dur = durationText(it)
-  if (dur) props["Duração"] = { rich_text: rt(dur) } // ajuste para a coluna "Duracao" exata
+  if (dur) props["Duração"] = { rich_text: rt(dur) }
   await notion.pages.create({ parent: { database_id: DATABASE_ID }, properties: props, children })
 }
 
-// --- fluxo principal ---
+// --- fluxo principal (paginado por data, lotes pequenos para nao estourar o limite de ~100KB) ---
 const seen = await existingIds()
-const _raw = await twin.callTool({ name: "summary_search", arguments: { limit: 100 } })
-console.log("DEBUG content items:", (_raw.content || []).length)
-const list = asList(parseToolJson(_raw))
-console.log("DEBUG itens lidos:", list.length)
+let cursor = null
 let novos = 0
-for (const it of list) {
-  const id = it.meeting_id
-  if (!id || seen.has(id)) continue
-  const full = parseToolJson(await twin.callTool({ name: "fetch", arguments: { id: `summary-${id}` } }))
-  await createRow(it, full)
-  novos++
+const processed = new Set()
+for (let page = 0; page < 200; page++) {
+  const args = { limit: 10 }
+  if (cursor) args.end_time = cursor
+  const batch = asList(parseToolJson(await twin.callTool({ name: "summary_search", arguments: args })))
+  console.log("DEBUG pagina", page, "| itens:", batch.length, "| ate:", cursor)
+  if (!batch.length) break
+  let novosNaPagina = 0
+  let oldest = null
+  for (const it of batch) {
+    const id = it.meeting_id
+    if (it.start_time_local && (oldest === null || it.start_time_local < oldest)) oldest = it.start_time_local
+    if (!id || processed.has(id)) continue
+    processed.add(id)
+    novosNaPagina++
+    if (seen.has(id)) continue
+    const full = parseToolJson(await twin.callTool({ name: "fetch", arguments: { id: `summary-${id}` } }))
+    await createRow(it, full)
+    novos++
+  }
+  if (!oldest || (cursor && oldest >= cursor) || novosNaPagina === 0) break
+  cursor = oldest
 }
 console.log(`Concluido. ${novos} conversa(s) nova(s) adicionada(s).`)
 await twin.close()
