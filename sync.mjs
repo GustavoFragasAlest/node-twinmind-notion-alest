@@ -20,7 +20,14 @@ await twin.connect(transport)
 // --- helpers ---
 function parseToolJson(result) {
   const text = (result.content || []).filter((c) => c.type === "text").map((c) => c.text).join("")
-  try { return JSON.parse(text) } catch { return text }
+  const safe = text.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")
+  try {
+    return JSON.parse(safe)
+  } catch (e) {
+    const pos = Number((/position (\d+)/.exec(e.message) || [])[1]) || 0
+    console.log("DEBUG parse FAIL:", e.message, "| around:", JSON.stringify(text.slice(Math.max(0, pos - 120), pos + 120)))
+    return text
+  }
 }
 // ATENCAO: confirme a forma real do retorno logando uma vez. Normaliza array/{results}/{items}.
 function asList(parsed) {
