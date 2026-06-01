@@ -67,7 +67,7 @@ async function createRow(it, full) {
     for (const c of chunk(transcript)) children.push(para(c))
   }
   const props = {
-    "Conversa": { title: rt(it.title || "Conversa TwinMind") },
+    "Conversa": { title: rt(it.meeting_title || "Conversa TwinMind") },
     "Resumo": { rich_text: rt(summary) },
     "Action Items": { rich_text: rt(toText(it.action_items || it.action)) },
     "Participantes": { rich_text: rt(toText(it.participants)) },
@@ -78,7 +78,7 @@ async function createRow(it, full) {
   if (it.start_time_local) props["Data"] = { date: { start: it.start_time_local } }
   if (it.end_time_local) props["Fim"] = { date: { start: it.end_time_local } }
   const dur = durationText(it)
-  if (dur) props["Duracao"] = { rich_text: rt(dur) } // ajuste para a coluna "Duracao" exata
+  if (dur) props["Duração"] = { rich_text: rt(dur) } // ajuste para a coluna "Duracao" exata
   await notion.pages.create({ parent: { database_id: DATABASE_ID }, properties: props, children })
 }
 
