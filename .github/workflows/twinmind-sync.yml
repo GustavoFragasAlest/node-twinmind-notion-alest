@@ -18,4 +18,6 @@ jobs:
             NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
             TWINMIND_TOKENS: ${{ secrets.TWINMIND_TOKENS }}
             TWINMIND_CLIENT: ${{ secrets.TWINMIND_CLIENT }}
+            GH_PAT: ${{ secrets.GH_PAT }}
+            
                  
